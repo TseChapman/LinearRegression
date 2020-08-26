@@ -1,6 +1,7 @@
 import sys
 import numpy as np
 import statsmodels.api as sm
+from statsmodels.stats.outliers_influence import variance_inflation_factor
 from statsmodels.sandbox.regression.predstd import wls_prediction_std
 from statsmodels.graphics.regressionplots import abline_plot
 import matplotlib.pyplot as plt
@@ -20,6 +21,9 @@ class LinearRegression:
         self.outputDirectory = outputDirectory
         self.numInstances = numInstances
         self.numAttributes = numAttributes
+        self.predictorNames = [
+            "Cylinders", "Displacement", "Horsepower", "Weight", "Acceleration", "Model Year", "Origin"
+        ]
         self.isExtrOutlierEliminated = False
         self.cookDistanceMax = 1.0
         self.RSS = 0.0
@@ -29,6 +33,7 @@ class LinearRegression:
     def initMatrice(self):
         self.responseVector = []  # Response value vector
         self.predictorMatrix = [[] for i in range(self.numAttributes - 1)]  # Predictor's values Matrix
+        self.vif = []
         self.residualList = []
         self.leverage = None
         self.fittedValue = None
@@ -62,7 +67,22 @@ class LinearRegression:
         self.RSE = math.sqrt(tempRSS / (self.numInstances - 1 - (self.numAttributes - 1)))
         #print(str(self.RSE)) # Debug use
 
+    def predMatrixConstruct(self):
+        if (len(self.predictorMatrix) == 0):
+            print("Empty Predictor Matrix")
+            return
+
+        ones = np.ones(len(self.predictorMatrix[0]))
+        X = sm.add_constant(np.column_stack((self.predictorMatrix[0], ones)))
+        for predVal in self.predictorMatrix[1:]:
+            X = sm.add_constant(np.column_stack((predVal, X)))
+        return X
+
     def simpleRegression(self, attributeIndex):
+        if (len(self.predictorMatrix) == 0):
+            print("Empty Predictor Matrix")
+            return
+
         if attributeIndex > self.numAttributes:
             print("simpleRegression: attributeIndex > self.numAttributes")
         ones = np.ones(len(self.predictorMatrix[attributeIndex]))
@@ -72,13 +92,25 @@ class LinearRegression:
 
         return result
 
+    def printPValueSummary(self, result, pValue):
+        if (result == None):
+            return
+
+        print("\n")
+        print("P-Value Summary Table")
+        print("==================================================")
+        #print(str(pValue))
+        pValue = str(pValue).strip("[]")
+        pValList = pValue.split()
+        for pValIndex in range(0, len(pValList) - 1):
+            print("Predictor ", self.predictorNames[pValIndex - 1], ": ", pValList[pValIndex])
+        print("Const: ", pValList[-1])
+        print("\n")
+
     # Ordinary Least Square Approach for estimating Linear Regression
     def regression(self, isPrintResult):
         # Add the vector of 1s into predictor matrix
-        ones = np.ones(len(self.predictorMatrix[0]))
-        X = sm.add_constant(np.column_stack((self.predictorMatrix[0], ones)))
-        for predVal in self.predictorMatrix[1:]:
-            X = sm.add_constant(np.column_stack((predVal, X)))
+        X = self.predMatrixConstruct()
 
         # Estimate the Linear Regression and follow statistics
         results = sm.OLS(self.responseVector, X).fit()
@@ -87,10 +119,10 @@ class LinearRegression:
         self.fittedValue = results.predict(X)
         self.calculateRSE()
 
-        if isPrintResult:
+        if isPrintResult is True:
             print(results.summary())
-            #print("P-values: " + str(results.pvalues))
-            print("\n")
+            self.printPValueSummary(results, results.pvalues)
+
         return results
 
     def valueSelection(self):
@@ -101,11 +133,16 @@ class LinearRegression:
         It decreases when a predictor improves the model by less than expected by chance.
         #"""
         print("After variable Selection Model:")
-        poppedPredictorMatrix = []
         # Forward selection
         attributeIndex = 0
         current_score, best_score = 0.0, 0.0
+
+        # Check the adjusted R squared for each attribute inserted into the regression
         while attributeIndex < self.numAttributes:
+            if (len(self.predictorMatrix) == 0):
+                print("Empty Predictor Matrix")
+                break
+
             ones = np.ones(len(self.predictorMatrix[0]))
             X = sm.add_constant(np.column_stack((self.predictorMatrix[0], ones)))
             for predVal in self.predictorMatrix[1:(1 + attributeIndex)]:
@@ -113,15 +150,63 @@ class LinearRegression:
 
             result = sm.OLS(self.responseVector, X).fit()
             current_score = result.rsquared_adj
+            if (attributeIndex < len(self.predictorNames)):
+                print("Attribute: ", self.predictorNames[attributeIndex], " adj R^2: ", current_score)
             if current_score < best_score:
-                poppedPredictorMatrix.append(self.predictorMatrix.pop(attributeIndex))
-                print("taken out Attribute number " + str(attributeIndex))
+                self.predictorMatrix.pop(attributeIndex)
+                print("taken out Attribute number ", self.predictorNames[attributeIndex])
+                self.predictorNames.pop(attributeIndex)
                 self.numAttributes -= 1
             else:
                 best_score = max(current_score, best_score)
                 attributeIndex += 1
+
+        print("\n")
         # After value selection, refit the regression
         self.result = self.regression(True)
+
+    def printVIFSummary(self):
+        if (len(self.vif) == 0):
+            print("self.vif is empty")
+            return
+        print("VIF Summary Table")
+        print("==================================================")
+        print("Const: ", self.vif[0])
+        for i in range(1, len(self.vif)):
+            print("x", i, ": ", self.vif[i])
+        print("\n")
+
+    def examineVIF(self):
+        # Don't take const's vif into account
+        for vifIndex in range(1, len(self.vif)):
+            # Examine VIF(i) if it is greater than 10
+            if self.vif[vifIndex] > 10:
+                # taken the predictor out of predictor matrix
+                self.predictorMatrix.pop(vifIndex - 1)
+                self.numAttributes -= 1
+                print("predictor poped: ", vifIndex)
+                return False
+        return True
+
+    # Examine Influence point from the result
+    def examineInfluencePoint(self):
+        (cookDistance, p) = self.result.get_influence().cooks_distance
+        #self.cookDistanceMax = 4/self.numInstances
+        #max = 0.0
+        for cookDIndex in range(len(cookDistance)):
+            cookD = float(cookDistance[cookDIndex])
+            #max = cookD if(cookD > max) else max
+
+            # Crude rule of thumb:
+            # If the cook distance exceed 1.0, investigate/eliminate the data point and return False to refit the data
+            if (cookD > float(self.cookDistanceMax)):
+                self.responseVector.pop(cookDIndex)
+                for attributeIndex in range(self.numAttributes - 1):
+                    self.predictorMatrix[attributeIndex].pop(cookDIndex)
+                self.numInstances -= 1
+                return False
+        #print(max)
+        return True
 
     # Initial function to start examinating influence point
     def startExamineInfluePoint(self):
@@ -131,24 +216,32 @@ class LinearRegression:
             if not self.isExtrOutlierEliminated:
                 self.result = self.regression(False)
         print(self.result.summary())
+        self.printPValueSummary(self.result, self.result.pvalues)
         print("\n")
 
-    # Examine Influence point from the result
-    def examineInfluencePoint(self):
-        (cookDistance, p) = self.result.get_influence().cooks_distance
-        #max = 0.0
-        for cookDIndex in range(len(cookDistance)):
-            cookD = float(cookDistance[cookDIndex])
-            #max = cookD if(cookD > max) else max
-            # If the cook distance exceed 1.0, eliminate the data point and return False to refit the data
-            if (cookD >= float(self.cookDistanceMax)):
-                self.responseVector.pop(cookDIndex)
-                for attributeIndex in range(self.numAttributes - 1):
-                    self.predictorMatrix[attributeIndex].pop(cookDIndex)
-                self.numInstances -= 1
-                return False
-        #print(max)
-        return True
+    def startExamineMulticollinearity(self):
+        """
+        isExamineVIFDone = False
+        while(not isExamineVIFDone):
+            # regression with X_i as response value
+            X = self.predMatrixConstruct()
+            self.vif = [variance_inflation_factor(X, i) for i in range(X.shape[1])]
+            self.printVIFSummary()
+            isExamineVIFDone = self.examineVIF()
+        """
+        X = self.predMatrixConstruct()
+        self.vif = [variance_inflation_factor(X, i) for i in range(X.shape[1])]
+        self.printVIFSummary()
+        """
+        self.predictorMatrix.pop(self.vif.index(max(self.vif)) - 1)
+        self.numAttributes -= 1
+        index = self.vif.index(max(self.vif))
+        X = self.predMatrixConstruct()
+        self.vif = [variance_inflation_factor(X, i) for i in range(X.shape[1])]
+        self.printVIFSummary()
+        """
+        # print("After Examining Collinearity: ")
+        # self.result = self.regression(True)
 
     def examineResidual(self):
         # I will use frequency table to plot residuals
@@ -162,8 +255,12 @@ class LinearRegression:
         fig, ax = plt.subplots()
         fig = sm.graphics.plot_fit(self.simpleRegression(predictorIndex), 0, ax=ax)
         ax.set_ylabel("MPG")
-        ax.set_xlabel("Predictor: " + str(predictorIndex))
-        ax.set_title("Simple Linear Regression Between MPG and Predictor " + str(predictorIndex + 1))
+        ax.set_xlabel("Predictor: " + str(self.predictorNames[predictorIndex]))
+        ax.set_title("Simple Linear Regression Between MPG and Predictor " + str(self.predictorNames[predictorIndex]))
+
+    def plotSimpleRegression(self):
+        for i in range(0, self.numAttributes - 1):
+            self.plot(i)
 
     def influencePlot(self):
         sm.graphics.influence_plot(self.result)
@@ -174,10 +271,6 @@ class LinearRegression:
         fig, ax = plt.subplots()
         plt.hist(self.residualList, bins=25)
         plt.show()
-
-    def plotSimpleRegression(self):
-        for i in range(0, self.numAttributes - 1):
-            self.plot(i)
 
     def plotMultipleRegression(self):
         fig, ax = plt.subplots()
@@ -193,12 +286,14 @@ class LinearRegression:
         print("First Full Variables Linear Model:")
         self.result = self.regression(True)
 
+        self.valueSelection()
+
         self.startExamineInfluePoint()
 
-        self.valueSelection()
+        self.startExamineMulticollinearity()
 
         # Plot graphs
         self.influencePlot()
-        self.plotHistogram()
         self.plotSimpleRegression()
-        self.plotMultipleRegression()
+        self.plotHistogram()
+        #self.plotMultipleRegression()
