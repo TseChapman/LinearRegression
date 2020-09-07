@@ -1,5 +1,6 @@
 import sys
 import LinearRegression
+from LinearRegression import LinearRegression
 
 if __name__ == "__main__":
     inputFileName = "Input/auto_mpg.csv"
@@ -7,5 +8,5 @@ if __name__ == "__main__":
     numInstances = 398
     numAttributes = 8
 
-    linearRegression = LinearRegression.LinearRegression(inputFileName, outputDirectory, numInstances, numAttributes)
+    linearRegression = LinearRegression(inputFileName, outputDirectory, numInstances, numAttributes)
     linearRegression.process()

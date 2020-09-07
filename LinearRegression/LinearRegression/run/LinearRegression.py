@@ -22,8 +22,15 @@ class LinearRegression:
         self.numInstances = numInstances
         self.numAttributes = numAttributes
         self.predictorNames = [
-            "Cylinders", "Displacement", "Horsepower", "Weight", "Acceleration", "Model Year", "Origin"
+            "Cylinders: 3", "Cylinders: 4", "Cylinders: 5", "Cylinders: 6", "Cylinders: 8", "Displacement",
+            "Horsepower", "Weight", "Acceleration", "Model Year: 70", "Model Year: 71", "Model Year: 72",
+            "Model Year: 73", "Model Year: 74", "Model Year: 75", "Model Year: 76", "Model Year: 77", "Model Year: 78",
+            "Model Year: 79", "Model Year: 80", "Model Year: 81", "Model Year: 82", "Origin: 1", "Origin: 2",
+            "Origin: 3"
         ]
+        self.numDiscrete = 21  # manually defined after running
+        self.numDiscreteAttribute = 3
+        self.numAttributes = numAttributes - self.numDiscreteAttribute + self.numDiscrete
         self.isExtrOutlierEliminated = False
         self.cookDistanceMax = 1.0
         self.RSS = 0.0
@@ -38,6 +45,41 @@ class LinearRegression:
         self.leverage = None
         self.fittedValue = None
 
+    def addCylinders(self, value):
+        cylinders = [3, 4, 5, 6, 8]
+        listIndex = [0, 1, 2, 3, 4]
+
+        for cylinderInd in range(len(cylinders)):
+            if value == cylinders[cylinderInd]:
+                self.predictorMatrix[listIndex[cylinderInd]].append(value)
+                listIndex.pop(cylinderInd)
+
+        for i in listIndex:
+            self.predictorMatrix[i].append(0)
+
+    def addModelYear(self, value):
+        year = [70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82]
+        listIndex = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+        for yearInd in range(len(year)):
+            if value == year[yearInd]:
+                self.predictorMatrix[listIndex[yearInd]].append(value)
+                listIndex.pop(yearInd)
+
+        for i in listIndex:
+            self.predictorMatrix[i].append(0)
+
+    def addOrigin(self, value):
+        origin = [1, 2, 3]
+        listIndex = [22, 23, 24]
+
+        for originInd in range(len(origin)):
+            if value == origin[originInd]:
+                self.predictorMatrix[listIndex[originInd]].append(value)
+                listIndex.pop(originInd)
+
+        for i in listIndex:
+            self.predictorMatrix[i].append(0)
+
     def readFile(self):
         # Read the input file
         inputFile = open(self.fileName, "rt")
@@ -50,12 +92,24 @@ class LinearRegression:
                 continue
 
             # Inputing values into corresponding matrix
+            readValIndex = 0
             i = 0
-            self.responseVector.append(float(lineValArr[i]))
+            self.responseVector.append(float(lineValArr[readValIndex]))
 
-            while (i < (self.numAttributes - 1)):
-                self.predictorMatrix[i].append(float(lineValArr[i + 1]))
-                i += 1
+            while (i < (self.numAttributes - 1) and readValIndex < len(lineValArr) - 2):  # ignore the name and /n
+                if (i == 0):  # Cylinders
+                    self.addCylinders(float(lineValArr[readValIndex + 1]))
+                    i += 5
+                elif (i == 9):  # model year
+                    self.addModelYear(float(lineValArr[readValIndex + 1]))
+                    i += 13
+                elif (i == 22):  # Origin
+                    self.addOrigin(float(lineValArr[readValIndex + 1]))
+                else:
+                    self.predictorMatrix[i].append(float(lineValArr[readValIndex + 1]))
+                    i += 1
+
+                readValIndex += 1
         inputFile.close()
 
     # Calculate RSE after regression is fitted
@@ -85,10 +139,7 @@ class LinearRegression:
 
         if attributeIndex > self.numAttributes:
             print("simpleRegression: attributeIndex > self.numAttributes")
-        ones = np.ones(len(self.predictorMatrix[attributeIndex]))
-        X = sm.add_constant(np.column_stack((self.predictorMatrix[0], ones)))
-        X = sm.add_constant(np.column_stack((self.predictorMatrix[attributeIndex], X)))
-        result = sm.OLS(self.responseVector, X).fit()
+        result = sm.OLS(self.responseVector, self.predictorMatrix[attributeIndex]).fit()
 
         return result
 
@@ -103,7 +154,7 @@ class LinearRegression:
         pValue = str(pValue).strip("[]")
         pValList = pValue.split()
         for pValIndex in range(0, len(pValList) - 1):
-            print("Predictor ", self.predictorNames[pValIndex - 1], ": ", pValList[pValIndex])
+            print("Predictor ", self.predictorNames[pValIndex], ": ", pValList[pValIndex])
         print("Const: ", pValList[-1])
         print("\n")
 
@@ -121,6 +172,7 @@ class LinearRegression:
 
         if isPrintResult is True:
             print(results.summary())
+            print("R Squared: ", results.rsquared)
             self.printPValueSummary(results, results.pvalues)
 
         return results
@@ -165,6 +217,37 @@ class LinearRegression:
         # After value selection, refit the regression
         self.result = self.regression(True)
 
+    # Examine Influence point from the result
+    def examineInfluencePoint(self):
+        (cookDistance, p) = self.result.get_influence().cooks_distance
+        self.cookDistanceMax = 4 / self.numInstances
+        max = 0.0
+        for cookDIndex in range(len(cookDistance)):
+            cookD = float(cookDistance[cookDIndex])
+            max = cookD if (cookD > max) else max
+
+            # Crude rule of thumb:
+            # If the cook distance exceed 1.0, investigate/eliminate the data point and return False to refit the data
+            if (cookD > float(self.cookDistanceMax)):
+                self.responseVector.pop(cookDIndex)
+                for attributeIndex in range(self.numAttributes - 1):
+                    self.predictorMatrix[attributeIndex].pop(cookDIndex)
+                self.numInstances -= 1
+                return False
+        print("Max Cook's Distance: ", max)
+        return True
+
+    # Initial function to start examinating influence point
+    def startExamineInfluePoint(self):
+        print("After examining Influence point:")
+        while (not self.isExtrOutlierEliminated):
+            self.isExtrOutlierEliminated = self.examineInfluencePoint()
+            if not self.isExtrOutlierEliminated:
+                self.result = self.regression(False)
+        print(self.result.summary())
+        self.printPValueSummary(self.result, self.result.pvalues)
+        print("\n")
+
     def printVIFSummary(self):
         if (len(self.vif) == 0):
             print("self.vif is empty")
@@ -173,7 +256,8 @@ class LinearRegression:
         print("==================================================")
         print("Const: ", self.vif[0])
         for i in range(1, len(self.vif)):
-            print("x", i, ": ", self.vif[i])
+            #print(f"Predictor {self.predictorNames[i-1]}: {self.vif[i]}")
+            print(self.vif[i])
         print("\n")
 
     def examineVIF(self):
@@ -187,37 +271,6 @@ class LinearRegression:
                 print("predictor poped: ", vifIndex)
                 return False
         return True
-
-    # Examine Influence point from the result
-    def examineInfluencePoint(self):
-        (cookDistance, p) = self.result.get_influence().cooks_distance
-        #self.cookDistanceMax = 4/self.numInstances
-        #max = 0.0
-        for cookDIndex in range(len(cookDistance)):
-            cookD = float(cookDistance[cookDIndex])
-            #max = cookD if(cookD > max) else max
-
-            # Crude rule of thumb:
-            # If the cook distance exceed 1.0, investigate/eliminate the data point and return False to refit the data
-            if (cookD > float(self.cookDistanceMax)):
-                self.responseVector.pop(cookDIndex)
-                for attributeIndex in range(self.numAttributes - 1):
-                    self.predictorMatrix[attributeIndex].pop(cookDIndex)
-                self.numInstances -= 1
-                return False
-        #print(max)
-        return True
-
-    # Initial function to start examinating influence point
-    def startExamineInfluePoint(self):
-        print("After examining Influence point:")
-        while (not self.isExtrOutlierEliminated):
-            self.isExtrOutlierEliminated = self.examineInfluencePoint()
-            if not self.isExtrOutlierEliminated:
-                self.result = self.regression(False)
-        print(self.result.summary())
-        self.printPValueSummary(self.result, self.result.pvalues)
-        print("\n")
 
     def startExamineMulticollinearity(self):
         """
@@ -269,7 +322,7 @@ class LinearRegression:
     def plotHistogram(self):
         self.examineResidual()
         fig, ax = plt.subplots()
-        plt.hist(self.residualList, bins=25)
+        plt.hist(self.residualList, bins=19)
         plt.show()
 
     def plotMultipleRegression(self):
@@ -278,7 +331,7 @@ class LinearRegression:
         ax.set_ylabel("MPG")
         ax.set_xlabel("Predictors")
         ax.set_title("Multiple Linear Regression Between MDP and Predictors")
-        plt.show()
+        # plt.show()
 
     def process(self):
         self.readFile()
@@ -286,14 +339,16 @@ class LinearRegression:
         print("First Full Variables Linear Model:")
         self.result = self.regression(True)
 
+        self.startExamineInfluePoint()
         self.valueSelection()
 
-        self.startExamineInfluePoint()
+        #self.startExamineMulticollinearity()
 
-        self.startExamineMulticollinearity()
+        print("Final Model:")
+        self.result = self.regression(True)
 
         # Plot graphs
         self.influencePlot()
         self.plotSimpleRegression()
         self.plotHistogram()
-        #self.plotMultipleRegression()
+        self.plotMultipleRegression()
