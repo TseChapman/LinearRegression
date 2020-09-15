@@ -28,6 +28,7 @@ class LinearRegression:
             "Model Year: 79", "Model Year: 80", "Model Year: 81", "Model Year: 82", "Origin: 1", "Origin: 2",
             "Origin: 3"
         ]
+        self.originalNumAttributes = numAttributes;
         self.numDiscrete = 21  # manually defined after running
         self.numDiscreteAttribute = 3
         self.numAttributes = numAttributes - self.numDiscreteAttribute + self.numDiscrete
@@ -40,6 +41,7 @@ class LinearRegression:
     def initMatrice(self):
         self.responseVector = []  # Response value vector
         self.predictorMatrix = [[] for i in range(self.numAttributes - 1)]  # Predictor's values Matrix
+        self.originalPredictorMatrix = [[] for i in range(self.originalNumAttributes - 1)]
         self.vif = []
         self.residualList = []
         self.leverage = None
@@ -94,6 +96,8 @@ class LinearRegression:
             # Inputing values into corresponding matrix
             readValIndex = 0
             i = 0
+            j = 0
+
             self.responseVector.append(float(lineValArr[readValIndex]))
 
             while (i < (self.numAttributes - 1) and readValIndex < len(lineValArr) - 2):  # ignore the name and /n
@@ -108,7 +112,8 @@ class LinearRegression:
                 else:
                     self.predictorMatrix[i].append(float(lineValArr[readValIndex + 1]))
                     i += 1
-
+                self.originalPredictorMatrix[j].append(float(lineValArr[readValIndex + 1]))
+                j += 1
                 readValIndex += 1
         inputFile.close()
 
@@ -121,14 +126,14 @@ class LinearRegression:
         self.RSE = math.sqrt(tempRSS / (self.numInstances - 1 - (self.numAttributes - 1)))
         #print(str(self.RSE)) # Debug use
 
-    def predMatrixConstruct(self):
-        if (len(self.predictorMatrix) == 0):
+    def predMatrixConstruct(self, predictorMatrix):
+        if (len(predictorMatrix) == 0):
             print("Empty Predictor Matrix")
             return
 
-        ones = np.ones(len(self.predictorMatrix[0]))
-        X = sm.add_constant(np.column_stack((self.predictorMatrix[0], ones)))
-        for predVal in self.predictorMatrix[1:]:
+        ones = np.ones(len(predictorMatrix[0]))
+        X = sm.add_constant(np.column_stack((predictorMatrix[0], ones)))
+        for predVal in predictorMatrix[1:]:
             X = sm.add_constant(np.column_stack((predVal, X)))
         return X
 
@@ -159,9 +164,9 @@ class LinearRegression:
         print("\n")
 
     # Ordinary Least Square Approach for estimating Linear Regression
-    def regression(self, isPrintResult):
+    def regression(self, isPrintResult, isOriginal):
         # Add the vector of 1s into predictor matrix
-        X = self.predMatrixConstruct()
+        X = self.predMatrixConstruct(self.predictorMatrix) if (isOriginal is False) else self.predMatrixConstruct(self.originalPredictorMatrix)
 
         # Estimate the Linear Regression and follow statistics
         results = sm.OLS(self.responseVector, X).fit()
@@ -215,7 +220,7 @@ class LinearRegression:
 
         print("\n")
         # After value selection, refit the regression
-        self.result = self.regression(True)
+        self.result = self.regression(True, False)
 
     # Examine Influence point from the result
     def examineInfluencePoint(self):
@@ -243,7 +248,7 @@ class LinearRegression:
         while (not self.isExtrOutlierEliminated):
             self.isExtrOutlierEliminated = self.examineInfluencePoint()
             if not self.isExtrOutlierEliminated:
-                self.result = self.regression(False)
+                self.result = self.regression(False, False)
         print(self.result.summary())
         self.printPValueSummary(self.result, self.result.pvalues)
         print("\n")
@@ -282,7 +287,7 @@ class LinearRegression:
             self.printVIFSummary()
             isExamineVIFDone = self.examineVIF()
         """
-        X = self.predMatrixConstruct()
+        X = self.predMatrixConstruct(self.predictorMatrix)
         self.vif = [variance_inflation_factor(X, i) for i in range(X.shape[1])]
         self.printVIFSummary()
         """
@@ -337,7 +342,10 @@ class LinearRegression:
         self.readFile()
 
         print("First Full Variables Linear Model:")
-        self.result = self.regression(True)
+        self.regression(True, True)
+
+        print("First Full Variables Linear Model (Include Dummy Variable):")
+        self.result = self.regression(True, False)
 
         self.startExamineInfluePoint()
         self.valueSelection()
@@ -345,7 +353,7 @@ class LinearRegression:
         #self.startExamineMulticollinearity()
 
         print("Final Model:")
-        self.result = self.regression(True)
+        self.result = self.regression(True, False)
 
         # Plot graphs
         self.influencePlot()
